@@ -114,7 +114,7 @@ Details: RAR 5, volume 1, lock
         Size: 137
  Packed size: 137
 
-        Name: Extras/keygen
+        Name: Extras/tool
         Type: File
         Size: 2058898
  Packed size: 774402
@@ -136,7 +136,7 @@ Details: RAR 5, volume 1, lock
         Type: Unix symbolic link
         Size: 0
 `))
-	want := []FileEntry{{"Extras/keygen", 2058898}, {"app.dmg", 31883884}, {"Extras/link", 0}}
+	want := []FileEntry{{"Extras/tool", 2058898}, {"app.dmg", 31883884}, {"Extras/link", 0}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -165,9 +165,9 @@ func TestNaturalLess(t *testing.T) {
 
 func TestParseLsarJSON(t *testing.T) {
 	out := `{"lsarFormatVersion":2,"lsarContents":[
-		{"XADFileName":"Extras/keygen","XADFileSize":2058898},
+		{"XADFileName":"Extras/tool","XADFileSize":2058898},
 		{"XADFileName":"Extras","XADIsDirectory":true},
-		{"XADFileName":"Extras/link","XADIsLink":true,"XADLinkDestination":"keygen","XADFileSize":6},
+		{"XADFileName":"Extras/link","XADIsLink":true,"XADLinkDestination":"tool","XADFileSize":6},
 		{"XADFileName":"app.dmg","XADFileSize":31883884},
 		{"XADFileName":"app.dmg","XADFileSize":31883884}
 	]}`
@@ -175,7 +175,7 @@ func TestParseLsarJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []FileEntry{{"Extras/keygen", 2058898}, {"Extras/link", 0}, {"app.dmg", 31883884}}
+	want := []FileEntry{{"Extras/tool", 2058898}, {"Extras/link", 0}, {"app.dmg", 31883884}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

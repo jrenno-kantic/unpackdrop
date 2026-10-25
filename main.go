@@ -1,4 +1,4 @@
-// Command unpackdrop unpacks scene-style release archives: an outer rar that
+// Command unpackdrop unpacks nested release archives: an outer rar that
 // contains zips, which in turn contain a multi-part rar. Only the .diz/.nfo
 // metadata and the multi-part rar payload are kept.
 package main
@@ -6,99 +6,116 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+
+	"github.com/spf13/pflag"
 )
 
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
-func run(argv []string) int {
-	fs := flag.NewFlagSet("unpackdrop", flag.ContinueOnError)
+// cliOptions holds the parsed command line.
+type cliOptions struct {
+	output, repack, level                       string
+	force, quiet, deleteSource, keepDir         bool
+	skipVerify, dryRun, list, showVersion, help bool
+	levelSet                                    bool
+	archives                                    []string
+}
 
-	// Every option has a short and a long name bound to the same variable.
-	type optionHelp struct{ short, long, arg, usage string }
-	var help []optionHelp
-	stringOpt := func(short, long, arg, usage string) *string {
-		p := new(string)
-		fs.StringVar(p, short, "", usage)
-		fs.StringVar(p, long, "", usage)
-		help = append(help, optionHelp{short, long, arg, usage})
-		return p
+// newFlagSet declares the options. pflag gives every option a short and a long
+// name, lets short options be combined (-fq) and accepts options before or
+// after the archive names. A backquoted word in a usage string names the
+// option's argument in the help.
+func newFlagSet(o *cliOptions) *pflag.FlagSet {
+	fs := pflag.NewFlagSet("unpackdrop", pflag.ContinueOnError)
+	fs.SortFlags = false
+	fs.SetOutput(io.Discard) // errors are reported by run
+	fs.StringVarP(&o.output, "output", "o", "", "write results to `DIR` (default: same directory as each archive)")
+	fs.BoolVarP(&o.force, "force", "f", false, "overwrite an existing destination folder or archive")
+	fs.BoolVarP(&o.quiet, "quiet", "q", false, "no progress bar, errors only")
+	fs.BoolVarP(&o.deleteSource, "delete-source", "d", false, "delete the source archive after a successful unpack")
+	fs.StringVarP(&o.repack, "repack", "r", "", "repack the result into <release>.`FORMAT` (zip, rar or 7z), without a root folder")
+	fs.StringVarP(&o.level, "level", "L", "", "with --repack, compression `LEVEL`: store, fast, normal (default) or max")
+	fs.BoolVarP(&o.keepDir, "keep-dir", "k", false, "with --repack, also keep the unpacked folder")
+	fs.BoolVarP(&o.skipVerify, "skip-verify", "s", false, "with --repack, do not test the new archive (faster, less safe)")
+	fs.BoolVarP(&o.dryRun, "dry-run", "n", false, "show what would be kept and where, without writing to the output directory")
+	fs.BoolVarP(&o.list, "list", "l", false, "print every kept file (to stdout)")
+	fs.BoolVarP(&o.showVersion, "version", "v", false, "print version and exit")
+	fs.BoolVarP(&o.help, "help", "h", false, "show this help")
+	return fs
+}
+
+// parseArgs parses argv into options and archive names.
+func parseArgs(argv []string) (*cliOptions, *pflag.FlagSet, error) {
+	o := &cliOptions{}
+	fs := newFlagSet(o)
+	// Checked first: pflag would read -force as -f -o rce and succeed.
+	if hint := longOptionHint(fs, argv); hint != "" {
+		return nil, fs, errors.New(hint)
 	}
-	boolOpt := func(short, long, usage string) *bool {
-		p := new(bool)
-		fs.BoolVar(p, short, false, usage)
-		fs.BoolVar(p, long, false, usage)
-		help = append(help, optionHelp{short, long, "", usage})
-		return p
+	if err := fs.Parse(argv); err != nil {
+		return nil, fs, err
 	}
+	o.levelSet = fs.Changed("level")
+	o.archives = fs.Args()
+	return o, fs, nil
+}
 
-	output := stringOpt("o", "output", "DIR", "output directory (default: same directory as each archive)")
-	force := boolOpt("f", "force", "overwrite an existing destination folder or archive")
-	quiet := boolOpt("q", "quiet", "no progress bar, errors only")
-	deleteSource := boolOpt("d", "delete-source", "delete the source archive after a successful unpack")
-	repack := stringOpt("r", "repack", "FORMAT", "repack the result into <release>.<FORMAT> (zip, rar or 7z), without a root folder")
-	level := stringOpt("L", "level", "LEVEL", "with --repack, compression: store, fast, normal (default) or max")
-	keepDir := boolOpt("k", "keep-dir", "with --repack, also keep the unpacked folder")
-	skipVerify := boolOpt("s", "skip-verify", "with --repack, do not test the new archive (faster, less safe)")
-	dryRun := boolOpt("n", "dry-run", "show what would be kept and where, without writing to the output directory")
-	list := boolOpt("l", "list", "print every kept file (to stdout)")
-	showVersion := boolOpt("v", "version", "print version and exit")
-	help = append(help, optionHelp{"h", "help", "", "show this help"})
-
-	fs.Usage = func() {
-		w := fs.Output()
-		fmt.Fprintf(w, "Usage: unpackdrop [options] <archive.rar> [archive.rar...]\n\n")
-		fmt.Fprintf(w, "Extracts a release rar, unpacks its zips and the inner multi-part rar,\n")
-		fmt.Fprintf(w, "then keeps only the .diz/.nfo files and the payload. Requires unrar, rar or\n")
-		fmt.Fprintf(w, "unar, and unzip, plus rar or 7zz/7z/7za to repack into those formats.\n\n")
-		fmt.Fprintf(w, "Options:\n")
-		for _, h := range help {
-			names := fmt.Sprintf("-%s, --%s", h.short, h.long)
-			if h.arg != "" {
-				names += " " + h.arg
-			}
-			fmt.Fprintf(w, "  %-26s %s\n", names, h.usage)
-		}
-	}
-
-	// Allow flags to be placed before or after positional arguments.
-	var archives []string
-	rest := argv
-	for {
-		if err := fs.Parse(rest); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				return 0
-			}
-			return 2
-		}
-		rest = fs.Args()
-		if len(rest) == 0 {
+// longOptionHint explains a long option written with one dash, such as
+// -version, which pflag would read as the combined short options -v -e -r...
+func longOptionHint(fs *pflag.FlagSet, argv []string) string {
+	for _, a := range argv {
+		if a == "--" {
 			break
 		}
-		archives = append(archives, rest[0])
-		rest = rest[1:]
+		name, _, _ := strings.Cut(strings.TrimPrefix(a, "-"), "=")
+		if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && len(name) > 1 && fs.Lookup(name) != nil {
+			return fmt.Sprintf("long options take two dashes: use --%s instead of %s", name, a)
+		}
 	}
+	return ""
+}
 
-	if *showVersion {
+func usage(w io.Writer, fs *pflag.FlagSet) {
+	fmt.Fprintf(w, "Usage: unpackdrop [options] <archive.rar> [archive.rar...]\n\n")
+	fmt.Fprintf(w, "Extracts a release rar, unpacks its zips and the inner multi-part rar,\n")
+	fmt.Fprintf(w, "then keeps only the .diz/.nfo files and the payload. Requires unrar, rar or\n")
+	fmt.Fprintf(w, "unar, and unzip, plus rar or 7zz/7z/7za to repack into those formats.\n")
+	fmt.Fprintf(w, "Short options can be combined, e.g. -fq.\n\n")
+	fmt.Fprintf(w, "Options:\n%s", fs.FlagUsages())
+}
+
+func run(argv []string) int {
+	o, fs, err := parseArgs(argv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\nRun 'unpackdrop --help' for usage.\n", err)
+		return 2
+	}
+	if o.help {
+		usage(os.Stdout, fs)
+		return 0
+	}
+	if o.showVersion {
 		fmt.Println("unpackdrop", versionString())
 		return 0
 	}
-	if len(archives) == 0 {
-		fs.Usage()
+	if len(o.archives) == 0 {
+		usage(os.Stderr, fs)
 		return 2
 	}
-	format, err := parseFormat(*repack)
+	format, err := parseFormat(o.repack)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
 	}
-	lvl, err := parseLevel(*level)
+	lvl, err := parseLevel(o.level)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
@@ -107,7 +124,7 @@ func run(argv []string) int {
 		for _, o := range []struct {
 			name string
 			set  bool
-		}{{"--keep-dir", *keepDir}, {"--skip-verify", *skipVerify}, {"--level", *level != ""}} {
+		}{{"--keep-dir", o.keepDir}, {"--skip-verify", o.skipVerify}, {"--level", o.levelSet}} {
 			if o.set {
 				fmt.Fprintf(os.Stderr, "error: %s requires --repack\n", o.name)
 				return 2
@@ -127,20 +144,20 @@ func run(argv []string) int {
 	defer stop()
 
 	failed := 0
-	for _, a := range archives {
+	for _, a := range o.archives {
 		opt := Options{
 			Archive:      a,
-			OutputDir:    *output,
-			Force:        *force,
-			DeleteSource: *deleteSource,
+			OutputDir:    o.output,
+			Force:        o.force,
+			DeleteSource: o.deleteSource,
 			Repack:       format,
 			Level:        lvl,
-			KeepDir:      *keepDir,
-			SkipVerify:   *skipVerify,
-			DryRun:       *dryRun,
-			Progress:     !*quiet,
+			KeepDir:      o.keepDir,
+			SkipVerify:   o.skipVerify,
+			DryRun:       o.dryRun,
+			Progress:     !o.quiet,
 		}
-		if !*quiet {
+		if !o.quiet {
 			opt.Log = os.Stderr
 			fmt.Fprintf(os.Stderr, "==> %s\n", a)
 		}
@@ -160,10 +177,10 @@ func run(argv []string) int {
 			if len(res.Problems) > 0 {
 				failed++
 			}
-		case !*quiet:
+		case !o.quiet:
 			printSummary(os.Stderr, res)
 		}
-		if *list {
+		if o.list {
 			printList(os.Stdout, res)
 		}
 	}

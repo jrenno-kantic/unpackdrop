@@ -1,7 +1,7 @@
-# unpackdrop
+# Unpack Drop
 
-A command-line tool that unpacks scene-style release archives, a rar that holds
-zips that hold a multi-part rar, and keeps only what matters: the `.diz` and
+A command-line tool that unpacks nested release archives, a rar that holds zips
+that hold a multi-part rar, and keeps only what matters: the `.diz` and
 `.nfo` files and the contents of the multi-part rar. It can also repack the
 result into a single zip, rar or 7z archive.
 
@@ -58,17 +58,54 @@ sudo apt-get install unrar rar 7zip unzip
 
 ## Install
 
-With Homebrew on macOS (this also installs `unar` for extraction):
+### Homebrew (macOS)
+
+unpackdrop is published as a cask in
+[jrenno-kantic/homebrew-tap](https://github.com/jrenno-kantic/homebrew-tap):
 
 ```bash
 brew install --cask jrenno-kantic/tap/unpackdrop
 ```
 
-On Linux, download the archive for your platform from the
-[releases page](https://github.com/jrenno-kantic/unpackdrop/releases) and put
-`unpackdrop` in your `PATH`.
+This adds the tap, installs `unpackdrop` and its `unar` dependency for RAR
+extraction. `unzip` ships with macOS. Check the install with:
 
-From source:
+```bash
+unpackdrop --version
+```
+
+Optional tools, only needed to repack:
+
+- 7z: `brew install sevenzip`
+- rar: RARLAB's `rar` from [rarlab.com](https://www.rarlab.com/download.htm)
+  (Homebrew no longer ships it)
+
+To upgrade or remove it:
+
+```bash
+brew upgrade --cask unpackdrop
+brew uninstall --cask unpackdrop
+```
+
+The binary is not signed by Apple. The cask clears its quarantine attribute
+after installing, so macOS does not block it on first launch.
+
+### Linux
+
+Download the archive for your platform (`linux_amd64` or `linux_arm64`) from the
+[releases page](https://github.com/jrenno-kantic/unpackdrop/releases), check it
+against `checksums.txt` and put `unpackdrop` in your `PATH`. For example, for
+1.0.0 (replace the version with the latest one):
+
+```bash
+curl -LO https://github.com/jrenno-kantic/unpackdrop/releases/download/v1.0.0/unpackdrop_1.0.0_linux_amd64.tar.gz
+tar -xzf unpackdrop_1.0.0_linux_amd64.tar.gz unpackdrop
+sudo install unpackdrop /usr/local/bin/
+```
+
+Then install the archivers listed under [Requirements](#requirements).
+
+### From source
 
 ```bash
 go install .
@@ -101,8 +138,16 @@ unpackdrop [options] <archive.rar> [archive.rar...]
 | `-v, --version` | Print the version and exit |
 | `-h, --help` | Show the help |
 
-Options can come before or after the archive names. Short options cannot be
-combined: write `-f -q`, not `-fq`.
+Options can come before or after the archive names. Short options can be
+combined, and a short option's value can follow it directly:
+
+```bash
+unpackdrop -fqk -r7z -Lfast Release.rar   # same as -f -q -k -r 7z -L fast
+```
+
+Long options take two dashes (`--force`). A long name written with one dash,
+such as `-force`, is refused with a hint rather than read as `-f -o rce`. Use
+`--` to pass an archive whose name starts with a dash.
 
 ### Examples
 
@@ -161,10 +206,10 @@ step instead.
 At the end, a short summary is printed:
 
 ```
-Done: Tower.Git.Client.v18.0.564.MacOS.UB.Incl.Keyfilemaker-CORE
+Done: Some.App.v2.0-GRP
   Content:  1,223 files, 190.9 MiB
-  Info:     core.nfo, file_id.diz
-  Folder:   /Users/me/Releases/Tower.Git.Client.v18.0.564.MacOS.UB.Incl.Keyfilemaker-CORE
+  Info:     file_id.diz, grp.nfo
+  Folder:   /Users/me/Releases/Some.App.v2.0-GRP
 ```
 
 Progress and the summary go to stderr and are hidden by `--quiet`. The file list
@@ -182,14 +227,14 @@ archive it would create, the files it would keep, whether the source would be
 deleted and how much disk space it needs.
 
 ```
-Dry run: Tower.Git.Client.v18.0.564.MacOS.UB.Incl.Keyfilemaker-CORE
-  Archive:  /Users/me/Releases/Tower.Git.Client.v18.0.564.MacOS.UB.Incl.Keyfilemaker-CORE.7z (would be created, level fast)
+Dry run: Some.App.v2.0-GRP
+  Archive:  /Users/me/Releases/Some.App.v2.0-GRP.7z (would be created, level fast)
   Content:  1,223 files, 190.9 MiB
-    CORE/                                         2 files    4.0 MiB
-    Tower.app/                                1,219 files  186.9 MiB
-    core.nfo                                                 8.2 KiB
+    Extras/                                       2 files    4.0 MiB
+    Some.App.app/                             1,219 files  186.9 MiB
     file_id.diz                                                363 B
-  Info:     core.nfo, file_id.diz
+    grp.nfo                                                  8.2 KiB
+  Info:     file_id.diz, grp.nfo
   Source:   kept
   Disk:     needs about 432.9 MiB, 608.8 GiB available
 ```
@@ -285,6 +330,9 @@ Common tasks are defined in [Taskfile.yml](Taskfile.yml):
 The round-trip tests for rar and 7z are skipped when those tools are not
 installed.
 
+The only Go dependency is [spf13/pflag](https://github.com/spf13/pflag), for
+command-line options.
+
 ## Versioning
 
 The version comes from the [VERSION](VERSION) file, which is compiled into the
@@ -308,14 +356,12 @@ release publishes macOS and Linux archives for amd64 and arm64 with a
 `checksums.txt`, and updates `Casks/unpackdrop.rb` in
 [jrenno-kantic/homebrew-tap](https://github.com/jrenno-kantic/homebrew-tap).
 
-One-time setup:
-
-1. Create the `jrenno-kantic/unpackdrop` repository and push this code to it.
-2. Create a fine-grained personal access token with **Contents: Read and
-   write** on `jrenno-kantic/homebrew-tap` only.
-3. Add it to the `unpackdrop` repository as the `HOMEBREW_TAP_GITHUB_TOKEN`
-   Actions secret. Without it, releases still publish but the cask is not
-   pushed to the tap.
+The tap is updated with the `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret: a
+fine-grained personal access token with **Contents: Read and write** on
+`jrenno-kantic/homebrew-tap` only. Without it, releases still publish but the
+cask is not pushed to the tap. When the token expires, the tap step fails:
+create a new one and replace the secret with
+`gh secret set HOMEBREW_TAP_GITHUB_TOKEN --repo jrenno-kantic/unpackdrop`.
 
 For each release:
 

@@ -40,7 +40,7 @@ func TestPercentWriter(t *testing.T) {
 func makeTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	touch(t, dir, "file_id.diz", "grp.nfo", "App.app/Contents/Info.plist", "Extras/keygen")
+	touch(t, dir, "file_id.diz", "grp.nfo", "App.app/Contents/Info.plist", "Extras/tool")
 	if err := os.Symlink("Contents/Info.plist", filepath.Join(dir, "App.app/link")); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestRepackRoundTrip(t *testing.T) {
 			if target, err := os.Readlink(filepath.Join(out, "App.app/link")); err != nil || target != "Contents/Info.plist" {
 				t.Fatalf("symlink not preserved: %q, %v", target, err)
 			}
-			if b, _ := os.ReadFile(filepath.Join(out, "Extras/keygen")); string(b) != "Extras/keygen" {
+			if b, _ := os.ReadFile(filepath.Join(out, "Extras/tool")); string(b) != "Extras/tool" {
 				t.Fatalf("content mismatch: %q", b)
 			}
 		})
