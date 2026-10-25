@@ -1,0 +1,8 @@
+/unpackdrop
+/dist/
+coverage.out
+# Task's checksum cache for `sources:`.
+/.task/
+.DS_Store
+# Sample releases are large and not part of the source.
+/samples/

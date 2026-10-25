@@ -1,0 +1,93 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: unpackdrop
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: unpackdrop
+    binary: unpackdrop
+    env:
+      - CGO_ENABLED=0
+    # The tool shells out to unrar/rar and unzip and checks free space with
+    # statfs, so only Unix targets are built.
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    # The tag wins over the VERSION file; release.yml checks they match.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+# Publishes Casks/unpackdrop.rb to github.com/jrenno-kantic/homebrew-tap on
+# each tagged release, so `brew install jrenno-kantic/tap/unpackdrop` works.
+#
+# A Cask, not a Formula: GoReleaser deprecated `brews` for pre-built binaries.
+# Homebrew only supports casks on macOS, so Linux users install from the
+# release archive.
+#
+# Pushing to another repository needs a PAT with `contents: write` on the tap,
+# exported as the HOMEBREW_TAP_GITHUB_TOKEN secret; the default GITHUB_TOKEN is
+# scoped to this repository only. Without the secret the cask is still
+# generated but not pushed, and the rest of the release succeeds. With it,
+# "auto" skips prereleases and snapshots.
+homebrew_casks:
+  - name: unpackdrop
+    binaries:
+      - unpackdrop
+    repository:
+      owner: jrenno-kantic
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    skip_upload: '{{ if .Env.HOMEBREW_TAP_GITHUB_TOKEN }}auto{{ else }}true{{ end }}'
+    commit_author:
+      name: goreleaser[bot]
+      email: 1207947+goreleaser[bot]@users.noreply.github.com
+    commit_msg_template: "unpackdrop {{ .Version }}"
+    homepage: "https://github.com/jrenno-kantic/unpackdrop"
+    description: "Unpack nested release archives, keeping only the payload and .nfo/.diz files"
+    # The rar cask installs both rar and unrar; unzip ships with macOS.
+    dependencies:
+      - cask: rar
+    caveats: |
+      Repacking to 7z needs 7-Zip:
+        brew install sevenzip
+    # The binary is unsigned, so Gatekeeper would quarantine it on first run.
+    # install_steps generates Homebrew's declarative postflight_steps stanza,
+    # which takes steps like `run` rather than arbitrary Ruby.
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/unpackdrop"]
+          end
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

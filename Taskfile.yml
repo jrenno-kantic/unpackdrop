@@ -1,0 +1,129 @@
+# https://taskfile.dev
+version: "3"
+
+vars:
+  BINARY: unpackdrop
+  DIST: dist
+  # The VERSION file is embedded in every build; `task build VERSION=x.y.z`
+  # overrides it through -ldflags.
+  VERSION_FILE:
+    sh: cat VERSION
+  VERSION: '{{.VERSION | default .VERSION_FILE}}'
+  LDFLAGS: -s -w -X main.version={{.VERSION}}
+
+tasks:
+  default:
+    desc: List available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  version:
+    desc: Print the version that builds will carry
+    silent: true
+    cmds:
+      - echo {{.VERSION}}
+
+  build:
+    desc: Build the binary for the current platform (VERSION=x.y.z to override)
+    sources:
+      - "**/*.go"
+      - go.mod
+      - VERSION
+    generates:
+      - "{{.BINARY}}"
+    cmds:
+      - go build -trimpath -ldflags "{{.LDFLAGS}}" -o {{.BINARY}} .
+
+  release:check:
+    desc: Validate .goreleaser.yml
+    preconditions: &goreleaser
+      - sh: command -v goreleaser
+        msg: "goreleaser is not installed (brew install goreleaser)"
+    cmds:
+      - goreleaser check
+
+  snapshot:
+    desc: Build all release archives locally into dist/, without publishing
+    preconditions: *goreleaser
+    cmds:
+      - goreleaser release --snapshot --clean
+
+  tag:
+    desc: Tag the current commit as v<VERSION>; pushing the tag starts the release
+    vars:
+      TAG: v{{.VERSION_FILE}}
+    preconditions:
+      - sh: git rev-parse --git-dir
+        msg: "not a git repository"
+      - sh: test -z "$(git status --porcelain)"
+        msg: "the working tree has uncommitted changes"
+      - sh: "! git rev-parse -q --verify refs/tags/{{.TAG}}"
+        msg: "tag {{.TAG}} already exists; bump VERSION first"
+    cmds:
+      - git tag -a {{.TAG}} -m "unpackdrop {{.VERSION_FILE}}"
+      - echo "Created {{.TAG}}. Publish it with - git push origin {{.TAG}}"
+
+  install:
+    desc: Install the binary into $GOPATH/bin
+    cmds:
+      - go install -trimpath -ldflags "{{.LDFLAGS}}" .
+
+  run:
+    desc: "Build and run, e.g. task run -- -o /tmp/out samples/foo.rar"
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}} {{.CLI_ARGS}}
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test ./...
+
+  test:race:
+    desc: Run unit tests with the race detector
+    cmds:
+      - go test -race -count=1 ./...
+
+  cover:
+    desc: Run tests with coverage and print a summary
+    cmds:
+      - go test -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out
+
+  fmt:
+    desc: Format the code
+    cmds:
+      - gofmt -s -w .
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Run golangci-lint
+    preconditions:
+      - sh: command -v golangci-lint
+        msg: "golangci-lint is not installed (brew install golangci-lint)"
+    cmds:
+      - golangci-lint run ./...
+
+  tidy:
+    desc: Tidy go.mod
+    cmds:
+      - go mod tidy
+
+  check:
+    desc: Run all checks (format check, vet, lint, tests)
+    cmds:
+      - cmd: test -z "$(gofmt -s -l .)" || (echo "unformatted files:"; gofmt -s -l .; exit 1)
+      - task: vet
+      - task: lint
+      - task: test:race
+
+  clean:
+    desc: Remove build artifacts and coverage files
+    cmds:
+      - rm -rf {{.BINARY}} {{.DIST}} coverage.out
+      - go clean -testcache
