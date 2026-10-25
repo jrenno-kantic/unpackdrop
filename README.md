@@ -32,20 +32,33 @@ Everything else (the zips, the rar volumes, duplicate nfo/diz copies) is deleted
 ## Requirements
 
 - Go 1.27+ to build
-- `unrar` and `unzip` in `PATH`. If `unrar` is missing, `rar` is used instead
-  for extraction, with the same options.
+- `unzip` and one RAR extractor in `PATH`, tried in this order: `unrar`, `rar`,
+  then `unar` (with its companion `lsar`).
 - To repack: `rar` for rar, `7zz`, `7z` or `7za` for 7z. Zip is written natively.
 
-On macOS, `unzip` is built in. The `rar` cask provides both `rar` and `unrar`:
+On macOS, `unzip` is built in. Homebrew disabled its `rar` cask (which also
+provided `unrar`) in September 2026, so use `unar` from Homebrew, which has its
+own RAR5 decoder:
 
 ```bash
-brew install --cask rar
-brew install sevenzip
+brew install unar sevenzip
+```
+
+To repack to rar, install RARLAB's `rar` from
+[rarlab.com](https://www.rarlab.com/download.htm). Homebrew's `7zz` cannot be
+used to extract: it is built without RAR decompression and fails on compressed
+entries.
+
+On Debian or Ubuntu (`rar` and `unrar` are in the non-free/multiverse
+repositories):
+
+```bash
+sudo apt-get install unrar rar 7zip unzip
 ```
 
 ## Install
 
-With Homebrew on macOS (this also installs `rar` and `unrar`):
+With Homebrew on macOS (this also installs `unar` for extraction):
 
 ```bash
 brew install --cask jrenno-kantic/tap/unpackdrop

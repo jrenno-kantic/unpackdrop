@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -17,24 +18,32 @@ import (
 const outputTailLimit = 4096
 
 // rarExtractors lists the binaries that can extract rar archives, in order of
-// preference. rar accepts the same switches as unrar for x and lt.
-var rarExtractors = []string{"unrar", "rar"}
+// preference. rar accepts the same switches as unrar for x and lt. unar (The
+// Unarchiver) has its own RAR decoder and lists archives with its companion
+// lsar; it is the one Homebrew still ships, since the rar cask was disabled.
+var rarExtractors = []string{"unrar", "rar", "unar"}
 
 // rarExtractor returns the first available rar extractor in PATH.
 func rarExtractor() (string, error) {
 	for _, b := range rarExtractors {
-		if _, err := exec.LookPath(b); err == nil {
-			return b, nil
+		if _, err := exec.LookPath(b); err != nil {
+			continue
 		}
+		if b == "unar" {
+			if _, err := exec.LookPath("lsar"); err != nil {
+				continue // unar can extract but not list without lsar
+			}
+		}
+		return b, nil
 	}
-	return "", fmt.Errorf("no rar extractor found in PATH (want %s)", strings.Join(rarExtractors, " or "))
+	return "", fmt.Errorf("no rar extractor found in PATH (want %s)", strings.Join(rarExtractors, ", "))
 }
 
 // checkTools verifies that the external extractors are available in PATH.
 func checkTools() error {
 	var missing []string
 	if _, err := rarExtractor(); err != nil {
-		missing = append(missing, strings.Join(rarExtractors, " or "))
+		missing = append(missing, strings.Join(rarExtractors, ", ")+" (one of)")
 	}
 	if _, err := exec.LookPath("unzip"); err != nil {
 		missing = append(missing, "unzip")
@@ -50,6 +59,12 @@ func unrarExtract(ctx context.Context, archive, dest string) error {
 	tool, err := rarExtractor()
 	if err != nil {
 		return err
+	}
+	if tool == "unar" {
+		// -q: quiet, -f: overwrite, -D: no extra containing folder. unar exits
+		// 1 on failure, so no exit code is tolerated as a warning; without -p
+		// it fails instead of prompting for a password.
+		return runTool(ctx, false, tool, "-q", "-f", "-D", "-o", dest, "--", archive)
 	}
 	// x: keep paths, -idq: quiet, -o+: overwrite, -p-: never prompt for a
 	// password, -y: assume yes, -c-: do not print the archive comment.
@@ -78,6 +93,9 @@ func rarList(ctx context.Context, archive string) ([]FileEntry, error) {
 	tool, err := rarExtractor()
 	if err != nil {
 		return nil, err
+	}
+	if tool == "unar" {
+		return lsarList(ctx, archive)
 	}
 	cmd := exec.CommandContext(ctx, tool, "lt", "-v", "-p-", "-c-", "--", archive)
 	cmd.WaitDelay = 5 * time.Second
@@ -135,6 +153,51 @@ func parseUnrarTechList(out []byte) []FileEntry {
 		}
 	}
 	return entries
+}
+
+// lsarList lists a rar archive with lsar, which follows every volume of a set.
+func lsarList(ctx context.Context, archive string) ([]FileEntry, error) {
+	cmd := exec.CommandContext(ctx, "lsar", "-j", "--", archive)
+	cmd.WaitDelay = 5 * time.Second
+	var stderr tailBuffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lsar failed: %w%s", err, stderr.suffix())
+	}
+	return parseLsarJSON(out)
+}
+
+// parseLsarJSON extracts files and symlinks from `lsar -j` output.
+func parseLsarJSON(out []byte) ([]FileEntry, error) {
+	var doc struct {
+		Contents []struct {
+			Name  string `json:"XADFileName"`
+			Size  int64  `json:"XADFileSize"`
+			IsDir bool   `json:"XADIsDirectory"`
+			Link  bool   `json:"XADIsLink"`
+		} `json:"lsarContents"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return nil, fmt.Errorf("lsar: unexpected output: %w", err)
+	}
+	var entries []FileEntry
+	seen := map[string]bool{}
+	for _, c := range doc.Contents {
+		if c.IsDir || c.Name == "" || seen[c.Name] {
+			continue
+		}
+		seen[c.Name] = true
+		size := c.Size
+		if c.Link {
+			size = 0
+		}
+		entries = append(entries, FileEntry{Path: filepath.ToSlash(c.Name), Size: size})
+	}
+	return entries, nil
 }
 
 // zipUnpackedSize returns the total uncompressed size of a zip archive.

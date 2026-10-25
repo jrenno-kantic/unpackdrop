@@ -66,12 +66,15 @@ homebrew_casks:
     commit_msg_template: "unpackdrop {{ .Version }}"
     homepage: "https://github.com/jrenno-kantic/unpackdrop"
     description: "Unpack nested release archives, keeping only the payload and .nfo/.diz files"
-    # The rar cask installs both rar and unrar; unzip ships with macOS.
+    # unar extracts RAR (Homebrew disabled the rar cask, which also provided
+    # unrar, in September 2026); unzip ships with macOS.
     dependencies:
-      - cask: rar
+      - formula: unar
     caveats: |
       Repacking to 7z needs 7-Zip:
         brew install sevenzip
+      Repacking to rar needs RARLAB's rar, which Homebrew no longer ships:
+        https://www.rarlab.com/download.htm
     # The binary is unsigned, so Gatekeeper would quarantine it on first run.
     # install_steps generates Homebrew's declarative postflight_steps stanza,
     # which takes steps like `run` rather than arbitrary Ruby.

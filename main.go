@@ -55,8 +55,8 @@ func run(argv []string) int {
 		w := fs.Output()
 		fmt.Fprintf(w, "Usage: unpackdrop [options] <archive.rar> [archive.rar...]\n\n")
 		fmt.Fprintf(w, "Extracts a release rar, unpacks its zips and the inner multi-part rar,\n")
-		fmt.Fprintf(w, "then keeps only the .diz/.nfo files and the payload. Requires unrar (or rar)\n")
-		fmt.Fprintf(w, "and unzip, plus rar or 7zz/7z/7za to repack into those formats.\n\n")
+		fmt.Fprintf(w, "then keeps only the .diz/.nfo files and the payload. Requires unrar, rar or\n")
+		fmt.Fprintf(w, "unar, and unzip, plus rar or 7zz/7z/7za to repack into those formats.\n\n")
 		fmt.Fprintf(w, "Options:\n")
 		for _, h := range help {
 			names := fmt.Sprintf("-%s, --%s", h.short, h.long)

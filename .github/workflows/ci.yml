@@ -27,7 +27,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y unrar rar 7zip unzip
       - name: Install archivers (macOS)
         if: runner.os == 'macOS'
-        run: brew install --cask rar && brew install sevenzip
+        # Homebrew disabled the rar cask, so macOS runs extract with unar and
+        # skips the tests that need rar to build fixtures; Linux covers those.
+        run: brew install unar sevenzip
       - run: go vet ./...
       - run: go test -race -count=1 ./...
       - run: go build -trimpath -o unpackdrop .

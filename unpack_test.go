@@ -162,3 +162,24 @@ func TestNaturalLess(t *testing.T) {
 		t.Fatalf("got %v", in)
 	}
 }
+
+func TestParseLsarJSON(t *testing.T) {
+	out := `{"lsarFormatVersion":2,"lsarContents":[
+		{"XADFileName":"Extras/keygen","XADFileSize":2058898},
+		{"XADFileName":"Extras","XADIsDirectory":true},
+		{"XADFileName":"Extras/link","XADIsLink":true,"XADLinkDestination":"keygen","XADFileSize":6},
+		{"XADFileName":"app.dmg","XADFileSize":31883884},
+		{"XADFileName":"app.dmg","XADFileSize":31883884}
+	]}`
+	got, err := parseLsarJSON([]byte(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []FileEntry{{"Extras/keygen", 2058898}, {"Extras/link", 0}, {"app.dmg", 31883884}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if _, err := parseLsarJSON([]byte("not json")); err == nil {
+		t.Fatal("want an error for invalid output")
+	}
+}

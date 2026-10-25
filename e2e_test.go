@@ -113,13 +113,27 @@ func requireTools(t *testing.T, tools ...string) {
 	}
 }
 
+// originalPath is PATH before any test narrows it with pathWith.
+var originalPath = os.Getenv("PATH")
+
+// lookOriginal finds tool in originalPath.
+func lookOriginal(tool string) (string, bool) {
+	for _, dir := range filepath.SplitList(originalPath) {
+		p := filepath.Join(dir, tool)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // pathWith sets PATH to a directory holding only links to the given tools.
 func pathWith(t *testing.T, tools ...string) {
 	t.Helper()
 	bin := t.TempDir()
 	for _, tool := range tools {
-		p, err := exec.LookPath(tool)
-		if err != nil {
+		p, ok := lookOriginal(tool)
+		if !ok {
 			t.Skipf("%s not installed", tool)
 		}
 		if err := os.Symlink(p, filepath.Join(bin, tool)); err != nil {
@@ -137,6 +151,14 @@ func TestRarExtractorFallback(t *testing.T) {
 	pathWith(t, "rar")
 	if got, err := rarExtractor(); err != nil || got != "rar" {
 		t.Fatalf("rar only: got %q, %v; want rar", got, err)
+	}
+	pathWith(t, "unar", "lsar")
+	if got, err := rarExtractor(); err != nil || got != "unar" {
+		t.Fatalf("unar only: got %q, %v; want unar", got, err)
+	}
+	pathWith(t, "unar") // without lsar, unar cannot list archives
+	if _, err := rarExtractor(); err == nil {
+		t.Fatal("unar without lsar: want an error")
 	}
 	pathWith(t)
 	if _, err := rarExtractor(); err == nil {
@@ -163,6 +185,30 @@ func TestUnpackWithRarOnly(t *testing.T) {
 	sort.Strings(got)
 	if want := []string{"Docs/readme.txt", "app.dmg", "file_id.diz", "xyz.nfo"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("files = %v, want %v", got, want)
+	}
+}
+
+// TestUnpackWithUnarOnly runs a full unpack when only The Unarchiver is
+// installed, as with Homebrew now that the rar cask is disabled.
+func TestUnpackWithUnarOnly(t *testing.T) {
+	requireTools(t, "rar", "unar", "lsar", "unzip")
+	archive := buildRelease(t, t.TempDir(), []string{"xyz.nfo", "file_id.diz"}, []string{"xyz.nfo"})
+	pathWith(t, "unar", "lsar", "unzip")
+	for _, dryRun := range []bool{true, false} {
+		res, err := Unpack(context.Background(), Options{Archive: archive, OutputDir: t.TempDir(), DryRun: dryRun})
+		if err != nil {
+			t.Fatalf("dry run %v: %v", dryRun, err)
+		}
+		got := make([]string, len(res.Files))
+		for i, f := range res.Files {
+			got[i] = f.Path
+		}
+		if want := []string{"Docs/readme.txt", "app.dmg", "file_id.diz", "xyz.nfo"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("dry run %v: files = %v, want %v", dryRun, got, want)
+		}
+		if res.Size != 300*1024+int64(len("Docs/readme.txt")+len("file_id.diz")+len("xyz.nfo")) {
+			t.Fatalf("dry run %v: size = %d", dryRun, res.Size)
+		}
 	}
 }
 
