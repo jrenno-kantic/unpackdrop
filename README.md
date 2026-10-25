@@ -95,11 +95,11 @@ after installing, so macOS does not block it on first launch.
 Download the archive for your platform (`linux_amd64` or `linux_arm64`) from the
 [releases page](https://github.com/jrenno-kantic/unpackdrop/releases), check it
 against `checksums.txt` and put `unpackdrop` in your `PATH`. For example, for
-1.0.0 (replace the version with the latest one):
+1.1.0 (replace the version with the latest one):
 
 ```bash
-curl -LO https://github.com/jrenno-kantic/unpackdrop/releases/download/v1.0.0/unpackdrop_1.0.0_linux_amd64.tar.gz
-tar -xzf unpackdrop_1.0.0_linux_amd64.tar.gz unpackdrop
+curl -LO https://github.com/jrenno-kantic/unpackdrop/releases/download/v1.1.0/unpackdrop_1.1.0_linux_amd64.tar.gz
+tar -xzf unpackdrop_1.1.0_linux_amd64.tar.gz unpackdrop
 sudo install unpackdrop /usr/local/bin/
 ```
 
