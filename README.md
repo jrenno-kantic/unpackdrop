@@ -135,6 +135,7 @@ unpackdrop [options] <archive.rar> [archive.rar...]
 | `-s, --skip-verify` | With `--repack`, do not test the new archive |
 | `-n, --dry-run` | Show what would be kept and where, without writing to the output directory |
 | `-l, --list` | Print every kept file, one per line, to stdout |
+| `--json` | Report progress and results as JSON lines on stdout, for other programs (see [Machine-readable output](#machine-readable-output)) |
 | `-v, --version` | Print the version and exit |
 | `-h, --help` | Show the help |
 
@@ -248,6 +249,37 @@ is written to the output directory, which does not even need to exist yet.
 Anything that would make the real run fail (an existing destination, not enough
 disk space, overwriting the source) is listed under `Problems:`, and the exit
 code is then `1`.
+
+## Machine-readable output
+
+`--json` replaces the progress bars and summaries with one JSON object per
+line on stdout, for programs that drive unpackdrop, such as the macOS app in
+`../UnpackDropUI`. Errors are still printed to stderr as well. `--json` cannot
+be combined with `--list`.
+
+```
+{"event":"start","source":"Release.rar"}
+{"event":"step","step":1,"steps":5,"label":"Extracting archive","total":71783438}
+{"event":"progress","step":1,"current":35891719,"total":71783438}
+{"event":"step_done","step":1}
+{"event":"release","release":"Some.App.v2.0-GRP"}
+{"event":"warning","message":"no .nfo file found in Release.rar"}
+{"event":"done","source":"Release.rar","release":"Some.App.v2.0-GRP","archive":"/out/Some.App.v2.0-GRP.7z","archive_size":78016214,"files":1223,"size":200206218,"info":["grp.nfo","file_id.diz"]}
+```
+
+| Event | Fields |
+|---|---|
+| `start` | `source`: the archive as given on the command line |
+| `release` | `release`: the release name, once the outer archive is extracted |
+| `step` | `step`, `steps`, `label`, `total` (bytes, 0 if unknown) |
+| `progress` | `step`, `current`, `total`, at most four times a second |
+| `step_done` | `step` |
+| `warning` | `message` |
+| `done` | `source`, `release`, `folder` (unless repacked without `--keep-dir`), `archive` and `archive_size` (with `--repack`), `files`, `size`, `info` (root `.nfo`/`.diz` files), `source_deleted`, and with `--dry-run`: `dry_run`, `problems` |
+| `error` | `source` (absent when no archive was opened, such as a missing tool), `message`, `interrupted` (after Ctrl+C or SIGTERM) |
+
+Each archive ends with exactly one `done` or `error` event. Programs should
+ignore events and fields they do not know, so new ones can be added.
 
 ## Repacking
 

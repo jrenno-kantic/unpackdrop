@@ -35,6 +35,8 @@ func TestRunFlags(t *testing.T) {
 		{[]string{"-version"}, 2},
 		{[]string{"-force", "x.rar"}, 2},
 		{[]string{"-L"}, 2},
+		{[]string{"--json", "--list", "x.rar"}, 2},
+		{[]string{"-json", "x.rar"}, 2},
 	}
 	for _, tc := range tests {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
