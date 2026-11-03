@@ -25,7 +25,7 @@ type cliOptions struct {
 	output, repack, level                       string
 	force, quiet, deleteSource, keepDir         bool
 	skipVerify, dryRun, list, showVersion, help bool
-	levelSet                                    bool
+	json, levelSet                              bool
 	archives                                    []string
 }
 
@@ -47,6 +47,7 @@ func newFlagSet(o *cliOptions) *pflag.FlagSet {
 	fs.BoolVarP(&o.skipVerify, "skip-verify", "s", false, "with --repack, do not test the new archive (faster, less safe)")
 	fs.BoolVarP(&o.dryRun, "dry-run", "n", false, "show what would be kept and where, without writing to the output directory")
 	fs.BoolVarP(&o.list, "list", "l", false, "print every kept file (to stdout)")
+	fs.BoolVar(&o.json, "json", false, "report progress and results as JSON lines on stdout, for other programs")
 	fs.BoolVarP(&o.showVersion, "version", "v", false, "print version and exit")
 	fs.BoolVarP(&o.help, "help", "h", false, "show this help")
 	return fs
@@ -120,6 +121,10 @@ func run(argv []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
 	}
+	if o.json && o.list {
+		fmt.Fprintln(os.Stderr, "error: --list cannot be combined with --json")
+		return 2
+	}
 	if format == FormatNone {
 		for _, o := range []struct {
 			name string
@@ -131,12 +136,21 @@ func run(argv []string) int {
 			}
 		}
 	}
+	// With --json, events replace the progress bars and summaries; errors
+	// still go to stderr as well.
+	var ev *Events
+	if o.json {
+		ev = NewEvents(os.Stdout)
+		o.quiet = true
+	}
 	if err := checkTools(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
+		ev.emit(errorEvent{Event: "error", Message: err.Error()})
 		return 1
 	}
 	if _, err := format.tool(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
+		ev.emit(errorEvent{Event: "error", Message: err.Error()})
 		return 1
 	}
 
@@ -156,7 +170,9 @@ func run(argv []string) int {
 			SkipVerify:   o.skipVerify,
 			DryRun:       o.dryRun,
 			Progress:     !o.quiet,
+			Events:       ev,
 		}
+		ev.emit(startEvent{Event: "start", Source: a})
 		if !o.quiet {
 			opt.Log = os.Stderr
 			fmt.Fprintf(os.Stderr, "==> %s\n", a)
@@ -165,18 +181,22 @@ func run(argv []string) int {
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				fmt.Fprintln(os.Stderr, "\ninterrupted, temporary files removed")
+				ev.emit(errorEvent{Event: "error", Source: a, Message: "interrupted", Interrupted: true})
 				return 130
 			}
 			fmt.Fprintf(os.Stderr, "error: %s: %v\n", a, err)
+			ev.emit(errorEvent{Event: "error", Source: a, Message: err.Error()})
 			failed++
 			continue
 		}
+		if res.DryRun && len(res.Problems) > 0 {
+			failed++
+		}
 		switch {
+		case ev != nil:
+			ev.emit(newDoneEvent(a, res))
 		case res.DryRun:
 			printPlan(os.Stdout, res, opt)
-			if len(res.Problems) > 0 {
-				failed++
-			}
 		case !o.quiet:
 			printSummary(os.Stderr, res)
 		}

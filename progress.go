@@ -15,10 +15,12 @@ const (
 	barWidth       = 30
 	redrawInterval = 100 * time.Millisecond
 	pollInterval   = 200 * time.Millisecond
+	eventInterval  = 250 * time.Millisecond
 )
 
 // Bar is a minimal, thread-safe terminal progress bar measured in bytes.
 // When the output is not a terminal it only prints a single line per phase.
+// With events, it also reports the step and its progress as JSON lines.
 type Bar struct {
 	mu       sync.Mutex
 	w        io.Writer
@@ -30,6 +32,23 @@ type Bar struct {
 	tty      bool
 	enabled  bool
 	done     bool
+
+	ev        *Events
+	step      int
+	lastEvent time.Time
+}
+
+// newStepBar creates the bar of step n of steps, labelled "[n/steps] label",
+// and announces the step on opt.Events.
+func newStepBar(opt Options, n, steps int, label string, total int64) *Bar {
+	b := NewBar(opt.Log, fmt.Sprintf("[%d/%d] %s", n, steps, label), total, opt.Progress)
+	if opt.Events != nil {
+		b.mu.Lock()
+		b.ev, b.step = opt.Events, n
+		b.mu.Unlock()
+		opt.Events.emit(stepEvent{Event: "step", Step: n, Steps: steps, Label: label, Total: total})
+	}
+	return b
 }
 
 // NewBar creates a progress bar. A total <= 0 renders an indeterminate bar.
@@ -64,6 +83,12 @@ func (b *Bar) Set(n int64) {
 	}
 	b.current = n
 	b.draw(false)
+	if b.ev != nil {
+		if now := time.Now(); now.Sub(b.lastEvent) >= eventInterval {
+			b.lastEvent = now
+			b.ev.emit(progressEvent{Event: "progress", Step: b.step, Current: b.current, Total: b.total})
+		}
+	}
 }
 
 // Finish marks the bar as complete.
@@ -77,6 +102,10 @@ func (b *Bar) Finish() {
 		b.current = b.total
 	}
 	b.done = true
+	if b.ev != nil {
+		b.ev.emit(progressEvent{Event: "progress", Step: b.step, Current: b.current, Total: b.total})
+		b.ev.emit(stepDoneEvent{Event: "step_done", Step: b.step})
+	}
 	if !b.enabled {
 		return
 	}

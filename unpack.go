@@ -33,6 +33,7 @@ type Options struct {
 	DryRun       bool   // report what would be kept and where, write nothing to OutputDir
 	Progress     bool
 	Log          io.Writer
+	Events       *Events // --json: machine-readable progress, nil to disable
 }
 
 // FileEntry is a file of the release, relative to its root.
@@ -120,7 +121,7 @@ func Unpack(ctx context.Context, opt Options) (*Result, error) {
 	}
 	defer func() {
 		if err := os.RemoveAll(work); err != nil {
-			logf(opt, "warning: could not remove temporary directory %s: %v\n", work, err)
+			warnf(opt, "could not remove temporary directory %s: %v", work, err)
 		}
 	}()
 
@@ -145,7 +146,7 @@ func Unpack(ctx context.Context, opt Options) (*Result, error) {
 	case opt.Repack != FormatNone:
 		steps = 5
 	}
-	step := func(n int, label string) string { return fmt.Sprintf("[%d/%d] %s", n, steps, label) }
+	newBar := func(n int, label string, total int64) *Bar { return newStepBar(opt, n, steps, label, total) }
 
 	res := &Result{DryRun: opt.DryRun, Available: -1}
 	// In a dry run, conditions that would stop the real run are collected
@@ -166,7 +167,7 @@ func Unpack(ctx context.Context, opt Options) (*Result, error) {
 	if err := requireSpace(work, sourceSize, "extracting the archive"); err != nil {
 		return nil, err
 	}
-	if err := withProgress(opt, step(1, "Extracting archive"), sourceSize, sourceDir, func() error {
+	if err := withProgress(newBar(1, "Extracting archive", sourceSize), sourceDir, func() error {
 		return unrarExtract(ctx, archive, sourceDir)
 	}); err != nil {
 		return nil, err
@@ -213,6 +214,7 @@ func Unpack(ctx context.Context, opt Options) (*Result, error) {
 	}
 	res.DeletesSource = opt.DeleteSource && !res.ReplacesSource
 	logf(opt, "Release: %s\n", release)
+	opt.Events.emit(releaseEvent{Event: "release", Release: release})
 
 	meta := newMetaSet(metaDir)
 	zips, err := collect(sourceDir, volumesDir, meta)
@@ -231,7 +233,7 @@ func Unpack(ctx context.Context, opt Options) (*Result, error) {
 		}
 		zipTotal += n
 	}
-	bar := NewBar(opt.Log, step(2, fmt.Sprintf("Unpacking %d zip(s)", len(zips))), zipTotal, opt.Progress)
+	bar := newBar(2, fmt.Sprintf("Unpacking %d zip(s)", len(zips)), zipTotal)
 	var done int64
 	for i, z := range zips {
 		dir := filepath.Join(work, fmt.Sprintf("zip-%04d", i))
@@ -288,7 +290,7 @@ func Unpack(ctx context.Context, opt Options) (*Result, error) {
 	if err := requireSpace(work, payloadSize, "extracting the payload"); err != nil {
 		return nil, err
 	}
-	if err := withProgress(opt, step(3, "Extracting payload"), payloadSize, payloadDir, func() error {
+	if err := withProgress(newBar(3, "Extracting payload", payloadSize), payloadDir, func() error {
 		for _, v := range firsts {
 			if err := unrarExtract(ctx, v, payloadDir); err != nil {
 				return fmt.Errorf("%s: %w", filepath.Base(v), err)
@@ -311,7 +313,7 @@ func Unpack(ctx context.Context, opt Options) (*Result, error) {
 	for _, src := range meta.paths() {
 		target := filepath.Join(payloadDir, filepath.Base(src))
 		if _, err := os.Lstat(target); err == nil {
-			logf(opt, "warning: %s already present in payload, keeping payload version\n", filepath.Base(src))
+			warnf(opt, "%s already present in payload, keeping payload version", filepath.Base(src))
 			continue
 		}
 		if err := os.Rename(src, target); err != nil {
@@ -324,7 +326,7 @@ func Unpack(ctx context.Context, opt Options) (*Result, error) {
 	}
 	res.Size = totalSize(res.Files)
 	if !hasNFO(res.Files) {
-		logf(opt, "warning: no .nfo file found in %s\n", filepath.Base(archive))
+		warnf(opt, "no .nfo file found in %s", filepath.Base(archive))
 	}
 
 	// Steps 4-5: repack and verify before anything is moved into place, so a
@@ -336,14 +338,14 @@ func Unpack(ctx context.Context, opt Options) (*Result, error) {
 		}
 		tmpArchive := filepath.Join(work, "repack"+opt.Repack.ext())
 		label := fmt.Sprintf("Packing %s (%s)", opt.Repack, opt.Level)
-		bar := NewBar(opt.Log, step(4, label), res.Size, opt.Progress)
+		bar := newBar(4, label, res.Size)
 		if err := pack(ctx, opt.Repack, opt.Level, payloadDir, tmpArchive, bar, res.Size); err != nil {
 			bar.Abort()
 			return nil, fmt.Errorf("repack: %w", err)
 		}
 		bar.Finish()
 		if !opt.SkipVerify {
-			bar = NewBar(opt.Log, step(5, "Verifying archive"), res.Size, opt.Progress)
+			bar = newBar(5, "Verifying archive", res.Size)
 			if err := verify(ctx, opt.Repack, tmpArchive, bar, res.Size); err != nil {
 				bar.Abort()
 				return nil, fmt.Errorf("verify: %w", err)
@@ -411,7 +413,7 @@ func planDryRun(opt Options, res *Result, outDir string, payload []FileEntry, me
 	res.Files = files
 	res.Size = totalSize(files)
 	if !hasNFO(files) {
-		logf(opt, "warning: no .nfo file found in %s\n", filepath.Base(opt.Archive))
+		warnf(opt, "no .nfo file found in %s", filepath.Base(opt.Archive))
 	}
 
 	// Peak use of a real run: the extracted archive, then volumes + payload,
@@ -448,8 +450,8 @@ func totalSize(files []FileEntry) int64 {
 	return n
 }
 
-func withProgress(opt Options, label string, total int64, dir string, fn func() error) error {
-	bar := NewBar(opt.Log, label, total, opt.Progress)
+// withProgress runs fn while bar follows the size of dir.
+func withProgress(bar *Bar, dir string, fn func() error) error {
 	stop := watchDir(dir, 0, bar)
 	err := fn()
 	stop()
@@ -716,4 +718,12 @@ func logf(opt Options, format string, args ...any) {
 	if opt.Log != nil {
 		fmt.Fprintf(opt.Log, format, args...)
 	}
+}
+
+// warnf reports a condition that does not stop the run, on the log and as an
+// event.
+func warnf(opt Options, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	logf(opt, "warning: %s\n", msg)
+	opt.Events.emit(warningEvent{Event: "warning", Message: msg})
 }
